@@ -3,6 +3,7 @@
 namespace ShiftOneLabs\LaravelSqsFifoQueue;
 
 use Aws\Sqs\SqsClient;
+use Aws\Sqs\Exception\SqsException;
 use BadMethodCallException;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
@@ -106,9 +107,23 @@ class SqsFifoQueue extends SqsQueue
             $message['MessageDeduplicationId'] = $deduplication;
         }
 
-        $response = $this->sqs->sendMessage($message);
+        $message_id = null;
+        $attempts = 0;
+        do {
+            try {
+                $response = $this->sqs->sendMessage($message);
+                $message_id = $response->get('MessageId');
+            } catch (SqsException $exception) {
+                if($exception->getAwsErrorCode() == 'RequestThrottled') {
+                // wait for the next second before retrying in case this is a throttling failure
+                time_sleep_until(time() + 1);
+                } else {
+                    throw $exception;
+                }
+            }
+        } while ($message_id == null && $attempts < 3);
 
-        return $response->get('MessageId');
+        return $message_id;
     }
 
     /**
